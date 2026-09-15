@@ -1,41 +1,43 @@
 import { computed, ref } from 'vue';
+import {
+  ref as dbRef,
+  push,
+  set as dbSet,
+  update as dbUpdate,
+  remove as dbRemove,
+  onValue,
+} from 'firebase/database';
+import { db } from '@/firebase';
 import type { Item, ItemDraft } from '@/types/Item';
 
-/**
- * TEMPORARY in-memory data layer.
- *
- * There's no database wired up yet, so `items` just lives in memory here.
- * It's module-level (declared outside the functions), so every component
- * that calls these composables shares the same reactive array — reporting
- * an item on ReportItemPage will show up immediately on HomePage/SearchPage.
- *
- * IMPORTANT: this resets on every page refresh / app restart since nothing
- * is persisted. Once the real Firebase Realtime Database logic is ready,
- * replace the bodies of these functions (keep the same return shapes) and
- * none of the view/component files should need to change.
- */
+const ITEMS_PATH = 'items';
 
 const items = ref<Item[]>([]);
-const loading = ref(false);
+const loading = ref(true);
 
-function generateId(): string {
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
+// Subscribed once, as soon as this module is first imported, and kept in
+// sync for the lifetime of the app — every component that calls useItems()/
+// useItem() shares this same reactive list, so a new report shows up
+// everywhere immediately without needing a manual refetch.
+onValue(dbRef(db, ITEMS_PATH), (snapshot) => {
+  const data = snapshot.val() as Record<string, Omit<Item, 'id'>> | null;
+  items.value = data
+    ? Object.entries(data)
+        .map(([id, value]) => ({ id, ...value }))
+        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+    : [];
+  loading.value = false;
+});
 
 export function useItems() {
-  // TODO: subscribe to `items/` in Firebase and keep `items` in sync instead.
   return { items, loading };
 }
 
 export function useItem(id: string) {
-  // Reactively look the item up from the shared in-memory list.
+  // Looks the item up from the same live-synced list above, so detail/edit
+  // pages update automatically if the record changes elsewhere too.
   const item = computed(() => items.value.find((i) => i.id === id) ?? null);
-  const itemLoading = ref(false);
-
-  // TODO: once Firebase is wired up, fetch `items/{id}` directly instead
-  // of relying on the item already being present in the local `items` list.
-
-  return { item, loading: itemLoading };
+  return { item, loading };
 }
 
 export function useSaveItem() {
@@ -46,19 +48,19 @@ export function useSaveItem() {
     saving.value = true;
     error.value = null;
     try {
-      // TODO: replace this block with real Firebase logic:
-      // 1. If imageFile is set, upload it to Firebase Storage and get a URL.
-      // 2. Push the draft (with that imageUrl) to `items/` in the DB.
+      // TODO: Firebase Storage isn't configured yet, so a picked photo is
+      // only kept as a temporary local blob URL — it will NOT persist after
+      // a refresh or show up on another device. Once Storage is set up,
+      // upload imageFile there (uploadBytes + getDownloadURL) and use that
+      // permanent URL here instead.
       const imageUrl = imageFile ? URL.createObjectURL(imageFile) : draft.imageUrl;
 
-      const newItem: Item = {
+      const newItemRef = push(dbRef(db, ITEMS_PATH));
+      await dbSet(newItemRef, {
         ...draft,
         imageUrl,
-        id: generateId(),
         createdAt: Date.now(),
-      };
-
-      items.value = [newItem, ...items.value];
+      });
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to save item';
     } finally {
@@ -77,12 +79,13 @@ export function useUpdateItem() {
     saving.value = true;
     error.value = null;
     try {
-      // TODO: replace with a real Firebase update() call on `items/{id}`.
+      // Same limitation as saveItem — see the TODO there re: Storage.
       const imageUrl = imageFile ? URL.createObjectURL(imageFile) : draft.imageUrl;
 
-      items.value = items.value.map((existing) =>
-        existing.id === id ? { ...existing, ...draft, imageUrl } : existing
-      );
+      await dbUpdate(dbRef(db, `${ITEMS_PATH}/${id}`), {
+        ...draft,
+        imageUrl,
+      });
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to update item';
     } finally {
@@ -91,4 +94,23 @@ export function useUpdateItem() {
   }
 
   return { updateItem, saving, error };
+}
+
+export function useDeleteItem() {
+  const deleting = ref(false);
+  const error = ref<string | null>(null);
+
+  async function deleteItem(id: string) {
+    deleting.value = true;
+    error.value = null;
+    try {
+      await dbRemove(dbRef(db, `${ITEMS_PATH}/${id}`));
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to delete item';
+    } finally {
+      deleting.value = false;
+    }
+  }
+
+  return { deleteItem, deleting, error };
 }

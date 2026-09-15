@@ -98,7 +98,8 @@ function goToDetail(item: Item) {
 }
 
 function onRefresh(event: CustomEvent) {
-  // TODO: re-fetch items from Firebase here once useItems is wired up.
+  // Items sync live via onValue in useItems, so there's nothing to
+  // manually re-fetch — just give the refresher a moment before closing.
   (event.target as HTMLIonRefresherElement).complete();
 }
 </script>

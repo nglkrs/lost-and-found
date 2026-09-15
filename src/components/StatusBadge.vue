@@ -15,15 +15,17 @@ const props = defineProps<{
 }>();
 
 const label = computed(() => {
-  if (props.status === 'open' && props.type) {
+  const status = props.status ?? 'open';
+  if (status === 'open' && props.type) {
     return props.type === 'lost' ? 'Lost' : 'Found';
   }
-  return props.status.charAt(0).toUpperCase() + props.status.slice(1);
+  return status.charAt(0).toUpperCase() + status.slice(1);
 });
 
 const color = computed(() => {
-  if (props.status === 'claimed') return 'warning';
-  if (props.status === 'resolved') return 'medium';
+  const status = props.status ?? 'open';
+  if (status === 'claimed') return 'warning';
+  if (status === 'resolved') return 'medium';
   // open
   return props.type === 'found' ? 'success' : 'danger';
 });
